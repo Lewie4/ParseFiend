@@ -22,7 +22,7 @@ frame:SetScript("OnEvent", function()
 				category,
 				"PARSEFIEND_DEV",
 				Settings.VarType.Boolean,
-				"Dev",
+				"Debug",
 				Settings.Default.False,
 				GetValue,
 				SetValue
@@ -69,15 +69,16 @@ frame:SetScript("OnEvent", function()
 	end
 
 	SLASH_PARSEFIEND1 = "/parsefiend"
+	SLASH_PARSEFIEND2 = "/pf"
 
 	SlashCmdList["PARSEFIEND"] = function(message)
-		local command = message:match("^(%S+)")
+		local command = message and message:match("^(%S+)") or ""
 
 		if command == "options" or command == "settings" or command == "" then
 			OpenSettings()
 		else
 			print("|cff00ff96ParseFiend|r - available commands:")
-			print("/parsefiend settings - Open the ParseFiend settings panel.")
+			print("/pf settings - Open the ParseFiend settings panel.")
 		end
 	end
 end)
