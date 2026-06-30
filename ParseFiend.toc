@@ -1,11 +1,13 @@
-## Interface: 11507
+## Interface: 120007
 ## Title: Parse Fiend
+## SavedVariables: ParseFiendConfig
 ## Notes: Displays Parse Fiend Parse Points on player tooltips.
 ## Author: Lewie
 ## Version: 0.0.1
-## SavedVariables:
+## IconTexture: Interface\AddOns\ParseFiend\icon
 
 Data.lua
 Util.lua
 Tooltip.lua
 ParseFiend.lua
+Settings.lua

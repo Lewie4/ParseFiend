@@ -1,21 +1,21 @@
 ParseFiendDB = {
 
     -- Format:
-    -- ["Name-Realm"] = {
+    -- ["Player-GUID"] = {
     --     pp = number,
     --     rank = number,
     --     updated = unixTimestamp
     -- }
 
-    ["Dock-Stormscale"] = {
-        pp = 1850,
-        rank = 421,
+    ["Player-2073-0A41BF97"] = {
+        pp = 158,
+        rank = 100,
         updated = 1752000000,
     },
 
-    ["Stump-Kazzak"] = {
-        pp = 2425,
-        rank = 57,
+    ["Player-2073-0A04AA30"] = {
+        pp = 3958,
+        rank = 1,
         updated = 1752000000,
     },
 

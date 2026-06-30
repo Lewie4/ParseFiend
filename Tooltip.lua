@@ -1,43 +1,35 @@
-local function AddTooltipData(tooltip)
+local function TooltipProcessor(tooltip, data)
 
-    local _, unit = tooltip:GetUnit()
+    if not data or not data.guid then
+        return
+    end
+	
+	if ParseFiendConfig and ParseFiendConfig.debug then
+        print("ParseFiend GUID:", data.guid)
+    end
 
-    if not unit then
+    local pfData = ParseFiendDB[data.guid]
+
+    if not pfData then
         return
     end
 
-    if not UnitIsPlayer(unit) then
-        return
-    end
-
-    local name, realm = UnitName(unit)
-
-    if realm == "" then
-        realm = GetRealmName()
-    end
-
-    local data = ParseFiend:GetPlayerData(name, realm)
-
-    if not data then
-        return
-    end
+    local ppColor = ParseFiend:GetPPColor(pfData.pp)
 
     tooltip:AddLine(" ")
 
+    -- Parse Points (COLOURED)
     tooltip:AddDoubleLine(
-        "|cff00ff96Parse Points|r",
-        "|cffffff00" .. data.pp .. "|r"
+        "Parse Points|r",
+        ppColor .. pfData.pp .. "|r"
     )
 
-    tooltip:AddDoubleLine(
-        "World Rank",
-        "#" .. data.rank
-    )
-
-    tooltip:Show()
+    -- World Rank (WHITE)
+    -- tooltip:AddDoubleLine(
+    --    "|cffffffffWorld Rank|r",
+    --    "|cffffffff#" .. pfData.rank .. "|r"
+    --)
 
 end
 
-GameTooltip:HookScript("OnTooltipSetUnit", function(self)
-    AddTooltipData(self)
-end)
+TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Unit, TooltipProcessor)
