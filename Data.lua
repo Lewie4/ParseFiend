@@ -7,8 +7,8 @@ ParseFiendDB = {
     --     updated = unixTimestamp
     -- }
 
-    ["Player-2073-0A41BF97"] = {
-        pp = 158,
+    ["Player-1305-0CEC3B19"] = {
+        pp = 3287,
         rank = 100,
         updated = 1752000000,
     },
