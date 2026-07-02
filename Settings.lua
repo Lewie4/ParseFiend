@@ -74,11 +74,15 @@ frame:SetScript("OnEvent", function()
 	SlashCmdList["PARSEFIEND"] = function(message)
 		local command = message and message:match("^(%S+)") or ""
 
-		if command == "options" or command == "settings" or command == "" then
+		if command == "d" then
+            ParseFiendConfig.debug = not ParseFiendConfig.debug
+            print("|cff00ff96ParseFiend|r - Debug mode " .. (ParseFiendConfig.debug and "enabled" or "disabled") .. ".")
+        elseif command == "options" or command == "settings" or command == "" then
 			OpenSettings()
 		else
 			print("|cff00ff96ParseFiend|r - available commands:")
 			print("/pf settings - Open the ParseFiend settings panel.")
+            print("/pf d - Toggle debug mode.")
 		end
 	end
 end)
