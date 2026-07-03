@@ -1,4 +1,9 @@
 local PF_Hooked = {}
+local PF_RaiderIoLoaded = false
+
+local function OnRaiderIoLoaded()
+    PF_RaiderIoLoaded = true
+end
 
 local function IsSecret(v)
     return issecretvalue and issecretvalue(v)
@@ -206,15 +211,28 @@ local function SetupFriendsTooltip()
             if not name then return end
 
             DebugPrint("PF [Friends] name=" .. tostring(name) .. " realm=" .. tostring(realm or "<implicit>"))
-            -- Apply immediately; we are intentionally late-registered so this
-            -- append runs *after* RaiderIO/Archon and adds the bottom line.
-            -- No C_Timer.After(0): adds a second tick delay which can race
-            -- against the user's mouse-out event.
+
+            -- Archon pattern (Tooltip.lua line 326-330): when RaiderIO is
+            -- loaded it owns the GameTooltip owner/clearing dance, so we
+            -- must NOT touch SetOwner (it would re-show the tooltip and
+            -- clear RaiderIO's already-appended lines). AppendParsePoints
+            -- adds its own blank separator before the Parse Points line,
+            -- so no extra GameTooltip_AddBlankLineToTooltip here. When
+            -- RaiderIO is absent we re-anchor GameTooltip under the
+            -- friend's row so parse points render visibly.
+            if not PF_RaiderIoLoaded then
+                GameTooltip:SetOwner(FriendsTooltip, "ANCHOR_BOTTOMRIGHT", -FriendsTooltip:GetWidth(), -4)
+            end
+
             Emit(GameTooltip, name, realm, "Friends")
+            GameTooltip:Show()
         end)
     end
 
-    -- Archon pattern: late-register so other addons (Raider) hook first.
+    -- Archon pattern: late-register so other addons (RaiderIO) hook first.
+    -- (Archon Tooltip.lua line 279-281: "don't hook instantly to ensure
+    -- other addons (namely Raider) can hook before us otherwise raider sets
+    -- the owner after us, which hides the tooltip and clears its lines")
     if FriendsFrame:IsShown() then
         RegisterFriendsShowHook()
     else
@@ -231,6 +249,13 @@ local function SetupWhoFrame()
         local info = SafeCall(C_FriendList.GetWhoInfo, button.index)
         if not info or not info.fullName then return end
         local name, realm = SplitNameRealm(info.fullName)
+
+        -- Archon pattern (Archon Tooltip.lua line 432-453): append inline
+        -- during OnEnter. No C_Timer.After(0) — the Blizzard OnEnter has
+        -- already populated GameTooltip by the time we run, and RaiderIO
+        -- uses the same TooltipDataProcessor Unit post-call path so our
+        -- AddLine/AddDoubleLine lands after their entries. AppendParsePoints
+        -- adds its own blank separator line so no extra spacer is needed.
         Emit(GameTooltip, name, realm, "Who")
     end
 
@@ -374,6 +399,26 @@ local function SetupLFGListTooltips()
     if LFGListFrame and LFGListFrame.SearchPanel and LFGListFrame.SearchPanel.ScrollBox then
         HookSearchScrollBox(LFGListFrame.SearchPanel.ScrollBox)
     end
+end
+
+-- Archon pattern (Init.lua line 104-131): track RaiderIO loaded state so
+-- our Show hooks can take a different code path. If RaiderIO is loaded we
+-- must NOT call SetOwner() — RaiderIO already owns the GameTooltip lifetime
+-- and re-anchoring triggers its hide/clear sequence, stomping our content.
+if IsPFDepLoaded("RaiderIO") then
+    PF_RaiderIoLoaded = true
+elseif EventUtil and EventUtil.ContinueOnAddOnLoaded then
+    EventUtil.ContinueOnAddOnLoaded("RaiderIO", OnRaiderIoLoaded)
+else
+    local rioFrame = CreateFrame("Frame")
+    rioFrame:RegisterEvent("ADDON_LOADED")
+    rioFrame:SetScript("OnEvent", function(self, name)
+        if name == "RaiderIO" then
+            OnRaiderIoLoaded()
+            self:UnregisterEvent("ADDON_LOADED")
+            self:SetScript("OnEvent", nil)
+        end
+    end)
 end
 
 -- TooltipDataProcessor: only the Unit type, matching Archon/RaiderIO.

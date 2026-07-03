@@ -1,3 +1,27 @@
+-- =====================================================================
+-- EXTENSION POINTS
+-- =====================================================================
+-- To add new features safely, touch the file that owns the layer:
+--
+--   * NEW data source          -> Util.lua  (GetPlayerRecord exists; add
+--                                 beside for new lookups / aggregators).
+--   * NEW tooltip source       -> Tooltip.lua  (add a Setup* function and
+--                                 hook it in setupFrame's loop below).
+--   * NEW aggregator            -> Util.lua  (use the local-upvalue pattern
+--                                 from AggregateByDifficulty).
+--   * NEW colour band           -> Util.lua  (extend GetPPColor's if/elseif
+--                                 ladder; thresholds stay in code).
+--   * NEW setting toggle        -> Settings.lua + ParseFiendConfig
+--                                 (defaults come from this file).
+--   * NEW render variant        -> Tooltip.lua  (AppendParsePoints stays
+--                                 the single renderer; feature flags live
+--                                 on the record).
+--   * NEW file                  -> add to ParseFiend.toc in dependency
+--                                 order. Util.lua must come first so the
+--                                 ParseFiend namespace exists before anything
+--                                 else reads it.
+-- =====================================================================
+
 ParseFiend = ParseFiend or {}
 
 ParseFiend.Colors = {
@@ -11,13 +35,15 @@ ParseFiend.Colors = {
     WHITE  = "|cffffffff",
 }
 
--- Schema constants; update when changing tiers.
-ParseFiend.BOSSES_PER_TIER       = 10   -- bosses per raid tier
-ParseFiend.DIFFICULTIES_PER_BOSS = 4    -- lfr, normal, heroic, mythic
+-- Schema constants; update when changing tiers. The pp array is laid out
+-- as [boss1_lfr, boss1_normal, boss1_heroic, boss1_mythic, boss2_lfr, ...]
+-- so cell index = (boss-1)*DIFFICULTIES_PER_BOSS + DIFFICULTY_INDEX[difficulty].
+-- Export pipeline tool (Celianware/Sunstrider-Auctioner-style entry)
+-- reads these constants to validate its output.
+ParseFiend.BOSSES_PER_TIER       = 10                                  -- bosses in current tier
+ParseFiend.DIFFICULTIES_PER_BOSS = 4                                   -- lfr, normal, heroic, mythic
 ParseFiend.PP_CELL_COUNT         = ParseFiend.BOSSES_PER_TIER * ParseFiend.DIFFICULTIES_PER_BOSS
 
--- Difficulty column index *inside* the 40-cell pp array. Boss N's difficulty
--- column is at cell index `(N-1)*4 + DIFFICULTY_INDEX[difficulty]`.
 ParseFiend.DIFFICULTY_INDEX = {
     lfr    = 1,
     normal = 2,
@@ -25,26 +51,33 @@ ParseFiend.DIFFICULTY_INDEX = {
     mythic = 4,
 }
 
--- Trim and collapse whitespace. We deliberately do NOT change case here so
--- the export pipeline can write canonical names ("Kazzak", not "KAZZAK"); keys
--- are compared directly to Blizzard's GetNormalizedRealmName() output.
+-- Trim whitespace. Keys are compared directly to Blizzard's
+-- GetNormalizedRealmName() output, so the export pipeline must emit
+-- canonical mixed-case strings ("Kazzak", not "KAZZAK").
 ---@param key string|nil
 ---@return string|nil
 local function NormalizeKey(key)
     if not key or type(key) ~= "string" then return nil end
     if key == "" then return nil end
-    key = key:gsub("%s+", " "):gsub("^%s+", ""):gsub("%s+$", "")
-    return key ~= "" and key or nil
+    return (key:gsub("^%s+", ""):gsub("%s+$", ""):gsub("%s+", " "))
 end
 ParseFiend.NormalizeKey = NormalizeKey
 
+---Fast path for the hot read: ppTable cells are already numbers in [0,100].
+---Only the slow fallback tiers handle non-number input (legacy strings).
 ---@param pp number|string|nil
----@return number # Always a number in [0,100].
+---@return number
 local function SanitizePP(pp)
-    if pp == nil or pp == "-" or pp == "" then return 0 end
-    if type(pp) == "string" then pp = tonumber(pp) end
-    if type(pp) ~= "number" or pp ~= pp then return 0 end -- NaN guard
-    if pp < 0 then return 0 end
+    if pp == nil then return 0 end
+    local t = type(pp)
+    if t == "number" then
+        if pp ~= pp or pp <= 0 then return 0 end
+        if pp > 100 then return 100 end
+        return pp
+    end
+    if t ~= "string" or pp == "" or pp == "-" then return 0 end
+    pp = tonumber(pp)
+    if not pp or pp ~= pp or pp <= 0 then return 0 end
     if pp > 100 then return 100 end
     return pp
 end
@@ -54,9 +87,7 @@ ParseFiend.SanitizePP = SanitizePP
 function ParseFiend:GetRegion()
     if GetCurrentRegionName then
         local ok, name = pcall(GetCurrentRegionName)
-        if ok and type(name) == "string" and name ~= "" then
-            return name:upper()
-        end
+        if ok and type(name) == "string" and name ~= "" then return name:upper() end
     end
     if GetCurrentRegion then
         local ok, id = pcall(GetCurrentRegion)
@@ -78,18 +109,11 @@ function ParseFiend:GetPlayerRecord(name, realm, region)
 
     name = NormalizeKey(name)
     if not name then return nil end
-
-    region  = NormalizeKey(region) or self:GetRegion()
-    realm   = NormalizeKey(realm)
+    realm = NormalizeKey(realm)
     if not realm then return nil end
+    if not region then region = self:GetRegion() end
 
-    local byRegion = ParseFiendDB[region]
-    if not byRegion then return nil end
-
-    local byRealm = byRegion[realm]
-    if not byRealm then return nil end
-
-    return byRealm[name]
+    return ParseFiendDB[region] and ParseFiendDB[region][realm] and ParseFiendDB[region][realm][name]
 end
 
 ---Compute the per-difficulty aggregate: sum of all 10 boss cells in a single
@@ -102,10 +126,14 @@ function ParseFiend:AggregateByDifficulty(ppTable, difficultyIndex)
     if type(difficultyIndex) ~= "number" then return 0 end
     if difficultyIndex < 1 or difficultyIndex > ParseFiend.DIFFICULTIES_PER_BOSS then return 0 end
 
+    -- Local-upvalue bind: the constant-folded loop is faster than repeated
+    -- table lookups in a hot path called on every tooltip hover.
+    local _sanitize = SanitizePP
+    local _diffMul = ParseFiend.DIFFICULTIES_PER_BOSS
+
     local total = 0
     for bossIndex = 1, ParseFiend.BOSSES_PER_TIER do
-        local cell = (bossIndex - 1) * ParseFiend.DIFFICULTIES_PER_BOSS + difficultyIndex
-        total = total + SanitizePP(ppTable[cell])
+        total = total + _sanitize(ppTable[(bossIndex - 1) * _diffMul + difficultyIndex])
     end
     return total
 end
@@ -126,9 +154,16 @@ end
 ---@return number
 function ParseFiend:AggregateTotal(ppTable)
     if not ppTable then return 0 end
+    if #ppTable == 0 then return 0 end
+
+    -- Hot path: numbers go through SanitizePP without tonumber. Two
+    -- upvalues closed over to skip repeated table lookups inside the loop.
+    local _sanitize = SanitizePP
+    local n = #ppTable < ParseFiend.PP_CELL_COUNT and #ppTable or ParseFiend.PP_CELL_COUNT
+
     local total = 0
-    for i = 1, ParseFiend.PP_CELL_COUNT do
-        total = total + SanitizePP(ppTable[i])
+    for i = 1, n do
+        total = total + _sanitize(ppTable[i])
     end
     return total
 end

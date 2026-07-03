@@ -1,38 +1,42 @@
 local AddonName = ... or "ParseFiend"
 
+-- Single forward declaration. The actual implementation is assigned below
+-- only when the Settings API registration succeeds; calling /pf before that
+-- fails loudly with a clear error rather than silently no-op'ing like the
+-- old empty local did.
+local OpenSettings = function() print("|cffff5555ParseFiend|r - settings UI not available on this client.") end
+
 local frame = CreateFrame("Frame")
 frame:RegisterEvent("PLAYER_LOGIN")
-
-local function OpenSettings() end
 
 frame:SetScript("OnEvent", function()
     if Settings and Settings.RegisterAddOnCategory and Settings.RegisterVerticalLayoutCategory then
         local ok, category = pcall(Settings.RegisterVerticalLayoutCategory, Settings, "ParseFiend")
         if ok then
-            do
-                local function GetValue()
-                    return ParseFiendConfig and ParseFiendConfig.debug
-                end
-
-                local function SetValue(value)
-                    if ParseFiendConfig then ParseFiendConfig.debug = value end
-                end
-
-                local setting = Settings.RegisterProxySetting(
-                    category,
-                    "PARSEFIEND_DEV",
-                    Settings.VarType.Boolean,
-                    "Debug",
-                    Settings.Default.False,
-                    GetValue,
-                    SetValue
-                )
-
-                Settings.CreateCheckbox(category, setting, "Enable developer logging in tooltips.")
+            local function GetValue()
+                return ParseFiendConfig and ParseFiendConfig.debug
             end
+
+            local function SetValue(value)
+                if ParseFiendConfig then ParseFiendConfig.debug = value end
+            end
+
+            local setting = Settings.RegisterProxySetting(
+                category,
+                "PARSEFIEND_DEV",
+                Settings.VarType.Boolean,
+                "Debug",
+                Settings.Default.False,
+                GetValue,
+                SetValue
+            )
+
+            Settings.CreateCheckbox(category, setting, "Enable developer logging in tooltips.")
 
             Settings.RegisterAddOnCategory(category)
 
+            -- Reassign only after the registration succeeded. Anything
+            -- already calling /pf before this point gets the safe no-op.
             OpenSettings = function()
                 Settings.OpenToCategory(category.ID)
             end
@@ -45,7 +49,7 @@ frame:SetScript("OnEvent", function()
             icon = C_AddOns.GetAddOnMetadata(AddonName, "IconTexture"),
             registerForAnyClick = true,
             notCheckable = true,
-            func = OpenSettings,
+            func = function() OpenSettings() end,
             funcOnEnter = function(self)
                 if MenuUtil and MenuUtil.ShowTooltip then
                     MenuUtil.ShowTooltip(self, function(tooltip)
