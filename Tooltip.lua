@@ -330,30 +330,28 @@ local function SetupLFGListTooltips()
     if PF_Hooked.LFG then return end
     PF_Hooked.LFG = true
 
-    -- Search panel: button has `resultID` directly (LFGListFrameSearchEntryTemplate)
-    local function HookSearchEntryEnter(button)
-        if not button then return end
-        local id = (button.GetResultID and button:GetResultID()) or button.resultID
-        if not id then return end
-        local info = SafeCall(C_LFGList.GetSearchResultInfo, id)
+    -- Archon pattern (Archon Tooltip.lua line 1061-1089): hook the
+    -- Blizzard-emitted global `LFGListUtil_SetSearchEntryTooltip` to
+    -- append to the LFG search-entry tooltip. The Blizzard function has
+    -- signature `(tooltip, resultID, autoAcceptOption)` and is called
+    -- from `LFGListSearchEntry_OnEnter` AFTER Blizzard adds its standard
+    -- leader/activity/members lines but BEFORE the final `:Show()` —
+    -- so any lines we add are part of the layout pass and survive.
+    -- This is also the same hook RaiderIO uses (RaiderIO core.lua line
+    -- 7817) — it's the canonical integration point for the LFG search
+    -- panel tooltip on retail.
+    local function OnLFGListUtilSearchEntry(tooltip, resultID)
+        if not tooltip or not resultID then return end
+        local info = SafeCall(C_LFGList.GetSearchResultInfo, resultID)
         if not info or not info.leaderName or info.leaderName == "" then return end
         local name, realm = SplitNameRealm(info.leaderName)
-        Emit(GameTooltip, name, realm, "LFGListSearch")
+        Emit(tooltip, name, realm, "LFGListSearch")
     end
 
-    local function HookSearchScrollBox(scrollBox)
-        if not scrollBox then return end
-
-        local function Reframe()
-            HookAllFrames(SafeCall(scrollBox.GetFrames, scrollBox), { OnEnter = HookSearchEntryEnter })
-        end
-
-        if LFGListFrame then
-            LFGListFrame:HookScript("OnShow", Reframe)
-        end
-        if scrollBox.RegisterCallback and ScrollBoxListMixin and ScrollBoxListMixin.Event then
-            scrollBox:RegisterCallback(ScrollBoxListMixin.Event.OnUpdate, Reframe)
-        end
+    local function ApplySearchEntryTooltipHook()
+        if type(_G.LFGListUtil_SetSearchEntryTooltip) ~= "function" then return false end
+        hooksecurefunc("LFGListUtil_SetSearchEntryTooltip", OnLFGListUtilSearchEntry)
+        return true
     end
 
     -- ApplicationViewer (applicants): each row is a different template
@@ -379,29 +377,26 @@ local function SetupLFGListTooltips()
         Emit(GameTooltip, name, realm, "LFGListApplicant")
     end
 
-    local function ApplyApplicantGlobalHook()
+    local function ApplyGroupFinderGlobalHooks()
+        local hooked = ApplySearchEntryTooltipHook()
         if type(_G.LFGListApplicantMember_OnEnter) == "function" then
             hooksecurefunc("LFGListApplicantMember_OnEnter", OnLFGListApplicantRowEnter)
-            return true
+            hooked = true
         end
-        return false
+        return hooked
     end
 
-    if not ApplyApplicantGlobalHook() then
+    if not ApplyGroupFinderGlobalHooks() then
         local g = CreateFrame("Frame")
         g:RegisterEvent("ADDON_LOADED")
         g:SetScript("OnEvent", function(self, name)
             if name == "Blizzard_GroupFinder" or name == "Blizzard_LFGList" then
-                if ApplyApplicantGlobalHook() then
+                if ApplyGroupFinderGlobalHooks() then
                     self:UnregisterEvent("ADDON_LOADED")
                     self:SetScript("OnEvent", nil)
                 end
             end
         end)
-    end
-
-    if LFGListFrame and LFGListFrame.SearchPanel and LFGListFrame.SearchPanel.ScrollBox then
-        HookSearchScrollBox(LFGListFrame.SearchPanel.ScrollBox)
     end
 end
 
