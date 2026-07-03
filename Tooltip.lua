@@ -256,7 +256,11 @@ local function SetupWhoFrame()
         -- uses the same TooltipDataProcessor Unit post-call path so our
         -- AddLine/AddDoubleLine lands after their entries. AppendParsePoints
         -- adds its own blank separator line so no extra spacer is needed.
+        -- Calling GameTooltip:Show() at the end (also Archon) ensures the
+        -- tooltip is laid out/re-laid-out even when RaiderIO clears it via
+        -- SetOwnerSafely upstream.
         Emit(GameTooltip, name, realm, "Who")
+        GameTooltip:Show()
     end
 
     WhoFrame:HookScript("OnShow", function()
