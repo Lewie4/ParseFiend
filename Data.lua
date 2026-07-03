@@ -1,22 +1,74 @@
+-- Parse Fiend database
+--
+-- Schema (region-aware, current tier only):
+--
+--   ParseFiendDB[region][realm][name] = {
+--       updated = <unixTimestamp>,
+--       pp      = { <num>, ... } -- exactly 40 entries; 0 (never killed) or positive number otherwise.
+--   }
+--
+-- The 40 entries are stored per player in this order, repeating the pattern
+--  [lfr, normal, heroic, mythic]  for each of the 10 bosses in the current
+-- raid tier:
+--
+--   index  boss (1-based)  difficulty
+--   ------   ---             ---
+--      1       1              lfr
+--      2       1              normal
+--      3       1              heroic
+--      4       1              mythic
+--      5       2              lfr
+--      6       2              normal
+--      7       2              heroic
+--      8       2              mythic
+--    ...    ...             ...
+--     37      10              lfr
+--     38      10              normal
+--     39      10              heroic
+--     40      10              mythic
+--
+-- Region / realm / name use the canonical case returned by Blizzard's
+-- GetNormalizedRealmName(). Keys are not lowercased on our side; trimming and
+-- whitespace collapse happens in ParseFiend.NormalizeKey. Boss order is
+-- implicit; the export pipeline that generates this file is expected to
+-- honour it. Adjust ParseFiend.BOSSES_PER_TIER / DIFFICULTY_INDEX in
+-- Util.lua when the tier changes.
+
 ParseFiendDB = {
-
-    -- Format:
-    -- ["Name-Realm"] = {
-    --     pp = number,
-    --     rank = number,
-    --     updated = unixTimestamp
-    -- }
-
-    ["Stump-Kazzak"] = {
-        pp = 3287,
-        rank = 100,
-        updated = 1752000000,
+    ["EU"] = {
+        ["Kazzak"] = {
+            ["Stump"] = {
+                updated = 1752000000,
+                pp = {
+                    0, 0, 0, 50,   -- boss 1
+                    0, 0, 0, 75,   -- boss 2
+                    0, 0, 0, 33,   -- boss 3
+                    0, 0, 0, 99,   -- boss 4
+                    0, 0, 0, 50,   -- boss 5
+                    0, 0, 0, 50,   -- boss 6
+                    0, 0, 0, 25,   -- boss 7
+                    0, 0, 0, 75,   -- boss 8
+                    0, 0, 0, 33,   -- boss 9
+                    0, 0, 0, 99,   -- boss 10
+                },
+            },
+        },
+        ["Stormscale"] = {
+            ["Dock"] = {
+                updated = 1752000000,
+                pp = {
+                    0, 100, 100, 100,   -- boss 1
+                    0, 100,  98,  95,   -- boss 2
+                    0,  90,  80,  73,   -- boss 3
+                    0, 100, 100, 100,   -- boss 4
+                    0,  85,  78,  81,   -- boss 5
+                    0,  92,  88,  85,   -- boss 6
+                    0,  80,  65,  55,   -- boss 7
+                    0,  95,  90,  87,   -- boss 8
+                    0,  70,  60,  45,   -- boss 9
+                    0, 100, 100, 100,   -- boss 10
+                },
+            },
+        },
     },
-
-    ["Dock-Stormscale"] = {
-        pp = 3958,
-        rank = 1,
-        updated = 1752000000,
-    },
-
 }

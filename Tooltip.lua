@@ -1,3 +1,5 @@
+local PF_Hooked = {}
+
 local function IsSecret(v)
     return issecretvalue and issecretvalue(v)
 end
@@ -14,194 +16,389 @@ local function SafeUnitIsPlayer(unit)
     return ok and result
 end
 
-local function ResolveUnitFromTooltip(tooltip)
-    if tooltip and tooltip.GetUnit then
-        local _, unit = SafeCall(tooltip.GetUnit, tooltip)
-        if unit and not IsSecret(unit) then
-            return unit
-        end
+local function IsPFDepLoaded(name)
+    if not name then return false end
+    if C_AddOns and C_AddOns.IsAddOnLoaded then
+        local loaded = C_AddOns.IsAddOnLoaded(name)
+        if loaded then return true end
     end
-
-    if tooltip and tooltip.GetPrimaryTooltipData then
-        local data = SafeCall(tooltip.GetPrimaryTooltipData, tooltip)
-        if data and not IsSecret(data) then
-            local guid = data.guid
-            if guid and not IsSecret(guid) then
-                local unit = SafeCall(UnitTokenFromGUID, guid)
-                if unit and not IsSecret(unit) then
-                    return unit
-                end
-            end
-        end
-    end
-
-    if not IsSecret("mouseover") and SafeUnitIsPlayer("mouseover") then
-        return "mouseover"
-    end
-
-    return nil
+    return SafeCall(IsAddOnLoaded, name) == true
 end
 
-local function ResolveCharacterFromTooltip(tooltip)
-    local unit = ResolveUnitFromTooltip(tooltip)
-    if not unit then return nil end
-
-    if not SafeUnitIsPlayer(unit) then return nil end
-
-    local name, realm = SafeCall(UnitFullName, unit)
-    if not name then
-        name, realm = SafeCall(UnitName, unit)
-    end
-
-    if not name or name == "" or IsSecret(name) then return nil end
-
-    if not realm or realm == "" or IsSecret(realm) then
-        realm = SafeCall(GetNormalizedRealmName)
-    end
-
-    if not realm or realm == "" then return nil end
-
-    return name, realm
+local function GetNormalizedRealmNameSafe()
+    return SafeCall(GetNormalizedRealmName)
 end
 
-local function AppendParsePoints(tooltip, data, name, realm)
-    local lookupKey = realm:gsub("%s+", "")
-    local pfData = ParseFiendDB and ParseFiendDB[name .. "-" .. lookupKey]
+local function SplitNameRealm(text)
+    if not text or text == "" or IsSecret(text) then return nil, nil end
+    if text:find("-", 1, true) then
+        local n, r = strsplit("-", text, 2)
+        if n and n ~= "" then return n, r end
+        return nil, nil
+    end
+    return text, nil
+end
 
+local function DebugPrint(msg)
     if ParseFiendConfig and ParseFiendConfig.debug then
-        print("PF   lookup=" .. (name or "?") .. "-" .. (realm or "?") ..
-            " hit=" .. tostring(pfData and true or false))
-    end
-
-    if not pfData then return end
-
-    local ppColor = ParseFiend and ParseFiend.GetPPColor
-        and ParseFiend:GetPPColor(pfData.pp)
-        or "|cff1eff00"
-
-    tooltip:AddLine(" ")
-    tooltip:AddDoubleLine(
-        "Parse Points|r",
-        ppColor .. pfData.pp .. "|r"
-    )
-end
-
-local function DebugProbe(label, tooltip, data)
-    if not (ParseFiendConfig and ParseFiendConfig.debug) then return end
-
-    print("PF [" .. label .. "] type=" .. tostring(data and data.type) ..
-        " guid=" .. tostring(data and data.guid) ..
-        " name=" .. tostring(data and data.name) ..
-        " realm=" .. tostring(data and data.realm) ..
-        " fullName=" .. tostring(data and data.fullName))
-
-    local unit = ResolveUnitFromTooltip(tooltip)
-    print("PF   unit=" .. tostring(unit) ..
-        " isPlayer=" .. tostring(unit and SafeUnitIsPlayer(unit)))
-
-    if unit and SafeUnitIsPlayer(unit) then
-        local name, realm = ResolveCharacterFromTooltip(tooltip)
-        print("PF   resolved=" .. tostring(name) .. "-" .. tostring(realm))
+        print(msg)
     end
 end
 
-local function UnitTooltipProcessor(tooltip, data)
-    DebugProbe("Unit", tooltip, data)
-    if not SafeUnitIsPlayer(data and data.unitToken or "mouseover") then
-        local name, realm = ResolveCharacterFromTooltip(tooltip)
-        if name and realm then
-            AppendParsePoints(tooltip, data, name, realm)
-        end
+local function AppendUnknownIfDebug(tooltip)
+    if tooltip and ParseFiendConfig and ParseFiendConfig.debug then
+        tooltip:AddLine(" ")
+        tooltip:AddDoubleLine("Parse Points|r", ParseFiend.Colors.GREY .. "Unknown|r")
+    end
+end
+
+local function AppendParsePoints(tooltip, name, realm)
+    -- `tooltip` is mandatory; guarantees we don't silently write into the
+    -- wrong frame (e.g. GameTooltip when caller meant unit tooltip).
+    if not tooltip or not name or IsSecret(name) or name == "" then
+        AppendUnknownIfDebug(tooltip)
         return
     end
 
-    local name, realm = ResolveCharacterFromTooltip(tooltip)
-    if name and realm then
-        AppendParsePoints(tooltip, data, name, realm)
+    local effectiveRealm = realm
+    if not effectiveRealm or effectiveRealm == "" or IsSecret(realm) then
+        effectiveRealm = GetNormalizedRealmNameSafe()
     end
-end
-
-local function GetPlayerRealmFromFullName(fullName)
-    if not fullName or fullName == "" or IsSecret(fullName) then return nil, nil end
-    local name, realm = strsplit("-", fullName)
-    if not realm or realm == "" then
-        realm = SafeCall(GetNormalizedRealmName)
+    if not effectiveRealm or effectiveRealm == "" then
+        AppendUnknownIfDebug(tooltip)
+        return
     end
-    if not realm or realm == "" then return name, nil end
-    return name, realm
-end
 
-local function FriendTooltipProcessor(tooltip, data)
-    DebugProbe("Friend", tooltip, data)
+    local region  = SafeCall(ParseFiend.GetRegion, ParseFiend)
+    local record  = SafeCall(ParseFiend.GetPlayerRecord, ParseFiend, name, effectiveRealm, region)
+
     if ParseFiendConfig and ParseFiendConfig.debug then
-        local dbgUnit = ResolveUnitFromTooltip(tooltip)
-        local dbgName, dbgRealm = ResolveCharacterFromTooltip(tooltip)
-        print("PF [Friend Debug] unit="..tostring(dbgUnit))
-        print("PF [Friend Debug] resolved via unit name="..tostring(dbgName).." realm="..tostring(dbgRealm))
-        print("PF [Friend Debug] data.fullName="..tostring(data and data.fullName).." data.name="..tostring(data and data.name))
-        if data then
-            for k,v in pairs(data) do
-                print("PF [Friend Debug] data field "..tostring(k).." = "..tostring(v))
+        print("PF lookup=" .. name .. "-" .. effectiveRealm .. " hit=" .. tostring(record and true or false))
+    end
+
+    if not record then
+        AppendUnknownIfDebug(tooltip)
+        return
+    end
+
+    local ppTable = record.pp
+    if type(ppTable) ~= "table" or #ppTable < ParseFiend.PP_CELL_COUNT then
+        AppendUnknownIfDebug(tooltip)
+        return
+    end
+
+    local totalPoints = tonumber(SafeCall(ParseFiend.AggregateTotal, ParseFiend, ppTable)) or 0
+    if totalPoints <= 0 then
+        AppendUnknownIfDebug(tooltip)
+        return
+    end
+
+    local ppColor = ParseFiend:GetPPColor(totalPoints) or ParseFiend.Colors.GREY
+
+    tooltip:AddLine(" ")
+    tooltip:AddDoubleLine("Parse Points|r", ppColor .. tostring(totalPoints) .. "|r")
+end
+
+local function Emit(tooltip, name, realm, source)
+    if not tooltip or not name then return end
+    DebugPrint("PF [" .. source .. "] name=" .. tostring(name) .. " realm=" .. tostring(realm or "<implicit>"))
+    AppendParsePoints(tooltip, name, realm)
+end
+
+local function HookAllFrames(frames, hookMap)
+    if not frames then return end
+    for _, frame in ipairs(frames) do
+        if frame and not frame.PF_Hooked then
+            frame.PF_Hooked = true
+            for eventName, callback in pairs(hookMap) do
+                if frame.HasScript and frame:HasScript(eventName) then
+                    frame:HookScript(eventName, callback)
+                end
             end
         end
     end
-    -- First attempt to resolve via unit token (handles Battle.net friends showing current character)
-    local name, realm = ResolveCharacterFromTooltip(tooltip)
-    if not (name and realm) then
-        -- Try using GUID if provided
-        if data and data.guid then
+end
+
+-- RaiderIO's canonical helper: returns UnitToken if `tooltip` is a
+-- Unit-type tooltip, otherwise nil. Avoids invoking GetPrimaryTooltipData
+-- on non-Unit tooltips so we don't trigger unnecessary Cop tooltip work.
+---@param tooltip GameTooltip
+---@return UnitToken? unit, string? guid
+local function GetTooltipUnit(tooltip)
+    if not tooltip then return nil end
+
+    -- Modern API path (Retail 12.x): check IsTooltipType first so we never
+    -- generate a payload for non-Unit tooltips.
+    if tooltip.IsTooltipType then
+        if not tooltip:IsTooltipType(Enum.TooltipDataType.Unit) then return nil end
+    end
+
+    if tooltip.GetPrimaryTooltipData then
+        local data = SafeCall(tooltip.GetPrimaryTooltipData, tooltip)
+        if data and not IsSecret(data) and data.guid and not IsSecret(data.guid) then
             local unit = SafeCall(UnitTokenFromGUID, data.guid)
-            if unit then
-                name, realm = SafeCall(UnitFullName, unit)
-                if not name then
-                    name = SafeCall(UnitName, unit)
-                end
-                if not realm or realm == "" then
-                    realm = SafeCall(GetNormalizedRealmName)
-                end
+            if unit and not IsSecret(unit) then
+                return unit, data.guid
             end
         end
-        if not (name and realm) then
-            local fullName = data and (data.fullName or data.name)
-            name, realm = GetPlayerRealmFromFullName(fullName)
+    end
+
+    -- Legacy / fallback path (older clients without IsTooltipType).
+    if tooltip.GetUnit then
+        local _, unit = SafeCall(tooltip.GetUnit, tooltip)
+        if unit and not IsSecret(unit) then return unit end
+    end
+
+    -- mouseover fallback only valid if there's a player unit there.
+    if SafeCall(UnitIsPlayer, "mouseover") then return "mouseover" end
+    return nil
+end
+
+local function UnitTooltipHandler(tooltip, data)
+    if not tooltip then return end
+    if tooltip ~= GameTooltip then return end
+    if data and data.type and Enum.TooltipDataType.Unit and data.type ~= Enum.TooltipDataType.Unit then
+        return
+    end
+
+    local unit = GetTooltipUnit(tooltip)
+    if not unit or not SafeUnitIsPlayer(unit) then return end
+
+    -- `UnitName` returns `(name, realm)`. Multi-return through pcall
+    -- drops values past the first by default; capture explicitly.
+    local ok, name, realm = pcall(UnitName, unit)
+    if not ok or not name then return end
+    if not realm or realm == "" then realm = GetNormalizedRealmNameSafe() end
+    Emit(tooltip, name, realm, "Unit")
+end
+
+local function ResolveNameRealmFromFriendsButton(button)
+    if not button or button.id == nil then return nil, nil end
+
+    if button.buttonType == FRIENDS_BUTTON_TYPE_WOW then
+        local info = SafeCall(C_FriendList.GetFriendInfoByIndex, button.id)
+        if info and info.name and info.name ~= "" then
+            return info.name, GetNormalizedRealmNameSafe()
+        end
+    elseif button.buttonType == FRIENDS_BUTTON_TYPE_BNET then
+        local info = SafeCall(C_BattleNet.GetFriendAccountInfo, button.id)
+        if info and info.gameAccountInfo then
+            local gai = info.gameAccountInfo
+            if gai.clientProgram == BNET_CLIENT_WOW and gai.characterName and gai.characterName ~= "" then
+                local realm = gai.realmDisplayName or gai.realmName or GetNormalizedRealmNameSafe()
+                return gai.characterName, realm
+            end
         end
     end
-    if name and realm then AppendParsePoints(tooltip, data, name, realm) end
+    return nil, nil
 end
 
-local function GuildMemberTooltipProcessor(tooltip, data)
-    DebugProbe("Guild", tooltip, data)
-    local name = data and data.name
-    local realm = data and (data.realm or data.guildRealm)
-    if name and (not realm or realm == "") then
-        realm = SafeCall(GetNormalizedRealmName)
+local function SetupFriendsTooltip()
+    if PF_Hooked.Friends or not FriendsFrame or not FriendsTooltip then return end
+    PF_Hooked.Friends = true
+
+    local function RegisterFriendsShowHook()
+        if PF_Hooked.FriendsShowHook then return end
+        PF_Hooked.FriendsShowHook = true
+
+        hooksecurefunc(FriendsTooltip, "Show", function(self)
+            local name, realm = ResolveNameRealmFromFriendsButton(self.button)
+            if not name then return end
+
+            DebugPrint("PF [Friends] name=" .. tostring(name) .. " realm=" .. tostring(realm or "<implicit>"))
+            -- Apply immediately; we are intentionally late-registered so this
+            -- append runs *after* RaiderIO/Archon and adds the bottom line.
+            -- No C_Timer.After(0): adds a second tick delay which can race
+            -- against the user's mouse-out event.
+            Emit(GameTooltip, name, realm, "Friends")
+        end)
     end
-    if name and realm then AppendParsePoints(tooltip, data, name, realm) end
-end
 
-local function WhoTooltipProcessor(tooltip, data)
-    DebugProbe("Who", tooltip, data)
-    local fullName = data and (data.fullName or data.name)
-    local name, realm = GetPlayerRealmFromFullName(fullName)
-    if name and realm then AppendParsePoints(tooltip, data, name, realm) end
-end
-
-local function SearchTooltipProcessor(tooltip, data)
-    DebugProbe("Search", tooltip, data)
-    local name = data and data.name
-    local realm = data and (data.realm or data.serverName)
-    if name and (not realm or realm == "") then
-        realm = SafeCall(GetNormalizedRealmName)
+    -- Archon pattern: late-register so other addons (Raider) hook first.
+    if FriendsFrame:IsShown() then
+        RegisterFriendsShowHook()
+    else
+        FriendsFrame:HookScript("OnShow", RegisterFriendsShowHook)
     end
-    if name and realm then AppendParsePoints(tooltip, data, name, realm) end
 end
 
-TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Unit, UnitTooltipProcessor)
-TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Friend, FriendTooltipProcessor)
-TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.GuildMember, GuildMemberTooltipProcessor)
-TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.ClubMessageInfo, FriendTooltipProcessor)
-TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.ClubFinderMember, SearchTooltipProcessor)
-TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Who, WhoTooltipProcessor)
-TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.GuildFinderApplicant, SearchTooltipProcessor)
-TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.PvPFinderApplicant, SearchTooltipProcessor)
-TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.LFGListSearchEntry, SearchTooltipProcessor)
+local function SetupWhoFrame()
+    if PF_Hooked.Who or not WhoFrame or not WhoFrame.ScrollBox then return end
+    PF_Hooked.Who = true
+
+    local function OnListEnter(button)
+        if not button or not button.index then return end
+        local info = SafeCall(C_FriendList.GetWhoInfo, button.index)
+        if not info or not info.fullName then return end
+        local name, realm = SplitNameRealm(info.fullName)
+        Emit(GameTooltip, name, realm, "Who")
+    end
+
+    WhoFrame:HookScript("OnShow", function()
+        local frames = SafeCall(WhoFrame.ScrollBox.GetFrames, WhoFrame.ScrollBox)
+        if frames then
+            HookAllFrames(frames, { OnEnter = OnListEnter })
+        end
+
+        if WhoFrame.ScrollBox.RegisterCallback and ScrollBoxListMixin and ScrollBoxListMixin.Event then
+            WhoFrame.ScrollBox:RegisterCallback(ScrollBoxListMixin.Event.OnUpdate, function()
+                local current = SafeCall(WhoFrame.ScrollBox.GetFrames, WhoFrame.ScrollBox)
+                if current then HookAllFrames(current, { OnEnter = OnListEnter }) end
+            end)
+        end
+    end)
+end
+
+local function SetupBlizzardCommunities()
+    -- Archon style: wait for Blizzard_Communities to load before hooking.
+    local function OnCommunitiesLoaded()
+        if PF_Hooked.CommunitiesHooked then return end
+        if not CommunitiesFrame or not CommunitiesFrame.MemberList then return end
+        PF_Hooked.CommunitiesHooked = true
+
+        local function OnGuildMembersLoaded(scrollBox)
+            local function OnEntryEnter(button)
+                if not button or not button.GetMemberInfo then return end
+                local memberInfo = button:GetMemberInfo()
+                if not memberInfo or not memberInfo.name or memberInfo.name == "" then return end
+                local name, realm = SplitNameRealm(memberInfo.name)
+                Emit(GameTooltip, name, realm, "Communities")
+            end
+
+            HookAllFrames(SafeCall(scrollBox.GetFrames, scrollBox), { OnEnter = OnEntryEnter })
+
+            if scrollBox.RegisterCallback and ScrollBoxListMixin and ScrollBoxListMixin.Event then
+                scrollBox:RegisterCallback(ScrollBoxListMixin.Event.OnUpdate, function()
+                    HookAllFrames(SafeCall(scrollBox.GetFrames, scrollBox), { OnEnter = OnEntryEnter })
+                end)
+            end
+        end
+
+        OnGuildMembersLoaded(CommunitiesFrame.MemberList.ScrollBox)
+    end
+
+    if EventUtil and EventUtil.ContinueOnAddOnLoaded then
+        EventUtil.ContinueOnAddOnLoaded("Blizzard_Communities", OnCommunitiesLoaded)
+    elseif PF_Hooked.CommunitiesTried == nil then
+        PF_Hooked.CommunitiesTried = true
+        if IsPFDepLoaded("Blizzard_Communities") then
+            OnCommunitiesLoaded()
+        else
+            local f = CreateFrame("Frame")
+            f:RegisterEvent("ADDON_LOADED")
+            f:SetScript("OnEvent", function(self, name)
+                if name == "Blizzard_Communities" then
+                    self:UnregisterEvent("ADDON_LOADED")
+                    self:SetScript("OnEvent", nil)
+                    OnCommunitiesLoaded()
+                end
+            end)
+        end
+    end
+end
+
+local function SetupLFGListTooltips()
+    if PF_Hooked.LFG then return end
+    PF_Hooked.LFG = true
+
+    -- Search panel: button has `resultID` directly (LFGListFrameSearchEntryTemplate)
+    local function HookSearchEntryEnter(button)
+        if not button then return end
+        local id = (button.GetResultID and button:GetResultID()) or button.resultID
+        if not id then return end
+        local info = SafeCall(C_LFGList.GetSearchResultInfo, id)
+        if not info or not info.leaderName or info.leaderName == "" then return end
+        local name, realm = SplitNameRealm(info.leaderName)
+        Emit(GameTooltip, name, realm, "LFGListSearch")
+    end
+
+    local function HookSearchScrollBox(scrollBox)
+        if not scrollBox then return end
+
+        local function Reframe()
+            HookAllFrames(SafeCall(scrollBox.GetFrames, scrollBox), { OnEnter = HookSearchEntryEnter })
+        end
+
+        if LFGListFrame then
+            LFGListFrame:HookScript("OnShow", Reframe)
+        end
+        if scrollBox.RegisterCallback and ScrollBoxListMixin and ScrollBoxListMixin.Event then
+            scrollBox:RegisterCallback(ScrollBoxListMixin.Event.OnUpdate, Reframe)
+        end
+    end
+
+    -- ApplicationViewer (applicants): each row is a different template
+    -- (LFGListFrameApplicantMemberTemplate) and DOES NOT have a `resultID`.
+    -- Hook the Blizzard-emitted global `LFGListApplicantMember_OnEnter(self)`
+    -- so we get the button. Archon does the same (Tooltip.lua line 1007).
+    local function OnLFGListApplicantRowEnter(button)
+        if not button then return end
+        -- `applicantID` lives on the parent frame, not on the row itself
+        -- (Archon Tooltip.lua line 986).
+        local parent = button:GetParent()
+        if not parent then return end
+        local applicantID = parent.applicantID
+        if not applicantID then return end
+        local memberIdx = button.memberIdx
+        if not memberIdx then return end
+        -- `GetApplicantMemberInfo` returns `(name, class, localizedClass,
+        -- level, ...)`. Character `name` is "Name-Realm" cross-realm, or
+        -- just "Name" same-realm. Empty means we can't show anything.
+        local charName = SafeCall(C_LFGList.GetApplicantMemberInfo, applicantID, memberIdx)
+        if not charName or charName == "" then return end
+        local name, realm = SplitNameRealm(charName)
+        Emit(GameTooltip, name, realm, "LFGListApplicant")
+    end
+
+    local function ApplyApplicantGlobalHook()
+        if type(_G.LFGListApplicantMember_OnEnter) == "function" then
+            hooksecurefunc("LFGListApplicantMember_OnEnter", OnLFGListApplicantRowEnter)
+            return true
+        end
+        return false
+    end
+
+    if not ApplyApplicantGlobalHook() then
+        local g = CreateFrame("Frame")
+        g:RegisterEvent("ADDON_LOADED")
+        g:SetScript("OnEvent", function(self, name)
+            if name == "Blizzard_GroupFinder" or name == "Blizzard_LFGList" then
+                if ApplyApplicantGlobalHook() then
+                    self:UnregisterEvent("ADDON_LOADED")
+                    self:SetScript("OnEvent", nil)
+                end
+            end
+        end)
+    end
+
+    if LFGListFrame and LFGListFrame.SearchPanel and LFGListFrame.SearchPanel.ScrollBox then
+        HookSearchScrollBox(LFGListFrame.SearchPanel.ScrollBox)
+    end
+end
+
+-- TooltipDataProcessor: only the Unit type, matching Archon/RaiderIO.
+-- We intentionally do NOT register MinimapMouseover (separate data flow,
+-- the mouseover fallback inside ResolveUnitFromTooltip already covers it).
+if Enum and Enum.TooltipDataType and Enum.TooltipDataType.Unit and TooltipDataProcessor then
+    TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Unit, UnitTooltipHandler)
+end
+
+-- Single setup frame, listens for PLAYER_LOGIN; Blizzard's setup frames
+-- like FriendsFrame/CommunitiesFrame are lazily loaded and Ar/Ra addon-
+-- tracked below via dedicated entry points.
+local setupFrame = CreateFrame("Frame")
+setupFrame:RegisterEvent("PLAYER_LOGIN")
+setupFrame:SetScript("OnEvent", function(_, event)
+    if event ~= "PLAYER_LOGIN" then return end
+
+    pcall(SetupFriendsTooltip)
+    pcall(SetupWhoFrame)
+    pcall(SetupBlizzardCommunities)
+    pcall(SetupLFGListTooltips)
+
+    if ParseFiendConfig and ParseFiendConfig.debug then
+        print("PF init RAIDERIO=" .. tostring(IsPFDepLoaded("RaiderIO")) ..
+              " ARCHON=" .. tostring(IsPFDepLoaded("ArchonTooltip")) ..
+              " COMMUNITY=" .. tostring(IsPFDepLoaded("Blizzard_Communities")))
+    end
+end)

@@ -1,6 +1,7 @@
 ## Interface: 120007
 ## Title: Parse Fiend
 ## SavedVariables: ParseFiendConfig
+## DefaultState: enabled
 ## Notes: Displays Parse Fiend Parse Points on player tooltips.
 ## Author: Lewie
 ## Version: 0.0.1
