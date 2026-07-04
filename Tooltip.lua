@@ -446,3 +446,144 @@ setupFrame:SetScript("OnEvent", function(_, event)
               " COMMUNITY=" .. tostring(IsPFDepLoaded("Blizzard_Communities")))
     end
 end)
+
+-- =====================================================================
+-- /who chat output
+-- Patterns and approach mirror Archon (Archon Chat.lua) and RaiderIO
+-- (RaiderIO core.lua WhoChatFrame module line 6710-6775). We:
+--   1. Hook `CHAT_MSG_SYSTEM` via `ChatFrame_AddMessageEventFilter`.
+--   2. Match the `WHO_LIST_FORMAT` (no guild) / `WHO_LIST_GUILD_FORMAT`
+--      (with guild) global patterns. Lazy-build once.
+--   3. Extract (nameLink, name, level) via the same capture positions.
+--   4. Resolve Name-Realm from `nameLink` (handles cross-realm) or fall
+--      back to `name` + local realm when no link is rendered.
+--   5. Look up the ParseFiend record. If found and total>0, append
+--      ` - Parse Points: N` to the message text.
+--   6. Return `false, modifiedText, ...rest` so the upstream message is
+--      replaced but not blocked. *Because filters run in registration
+--      order and we register at PLAYER_LOGIN (after RaiderIO registers
+--      during its own module init), our filter receives RaiderIO's
+--      already-patched text as `text` — so we naturally append AFTER
+--      their ` - RIO Score: NN` segment.
+-- =====================================================================
+
+-- Archon's pattern-to-lua converter (Archon Chat.lua line 6-20).
+local function PF_FormatToPattern(text)
+    text = text:gsub("%%", "%%%%")
+    text = text:gsub("%.", "%%%.")
+    text = text:gsub("%?", "%%%?")
+    text = text:gsub("%+", "%%%+")
+    text = text:gsub("%-", "%%%-")
+    text = text:gsub("%(", "%%%(")
+    text = text:gsub("%)", "%%%)")
+    text = text:gsub("%[", "%%%[")
+    text = text:gsub("%]", "%%%]")
+    text = text:gsub("%%%%s", "(.-)")
+    text = text:gsub("%%%%d", "(%%d+)")
+    text = text:gsub("%%%%%%[%d%.%,]+f", "([%%d%%.%%,]+)")
+    return text
+end
+
+local PF_WhoPatterns
+local function PF_BuildWhoPatterns()
+    if PF_WhoPatterns then return PF_WhoPatterns end
+    if type(WHO_LIST_GUILD_FORMAT) ~= "string" or type(WHO_LIST_FORMAT) ~= "string" then
+        return nil
+    end
+    -- Anchor at start only (`^`) — NOT at end. When RaiderIO has already
+    -- appended ` - RIO Score: NN` to the text, our pattern still matches
+    -- the leading WHO-list portion and we read out the name/link/level
+    -- captures. The trailing Rio data goes through unchanged because we
+    -- return `text .. suffix` and only suffix changes the end.
+    PF_WhoPatterns = {
+        guild = "^" .. PF_FormatToPattern(WHO_LIST_GUILD_FORMAT),
+        nogl  = "^" .. PF_FormatToPattern(WHO_LIST_FORMAT),
+    }
+    return PF_WhoPatterns
+end
+
+-- Extract (name, realm) from a chat link `|Hplayer:Name-Realm|h[Name]|h`.
+-- Returns nil for both if not parseable.
+local function PF_ResolveNameLink(linkText)
+    if not linkText or linkText == "" then return nil, nil end
+    local data = linkText:match("^|Hplayer:(.-)|h")
+    if not data then return nil, nil end
+    return SplitNameRealm(data)
+end
+
+local PF_WhoFilterRegistered = false
+local function PF_RegisterWhoChatFilter()
+    if PF_WhoFilterRegistered then return end
+    PF_WhoFilterRegistered = true
+
+    local patterns = PF_BuildWhoPatterns()
+    if not patterns then return end
+
+    -- Archon pattern (Archon Chat.lua line 79-83): prefer the newer
+    -- EventUtil/ChatFrameUtil API, fall back to the classic global.
+    -- Filters stack in registration order; we run after RaiderIO since
+    -- we register at PLAYER_LOGIN (after RAID/C_Timer based addons
+    -- have already installed their filters), which means we see the
+    -- already-appended RaiderIO text as the `text` argument and append
+    -- *after* it.
+    local function OnWhoChatMessage(self, event, text, ...)
+        if event ~= "CHAT_MSG_SYSTEM" then return false end
+
+        -- Try guild-format first, fall back to no-guild. Mirrors Archon
+        -- Chat.lua line 34-38 and RaiderIO core.lua line 6743-6751.
+        -- Discarded `_` capture positions line up with the WHO-list
+        -- layout but Parse Points doesn't care about level/race/class
+        -- here — only the character identity matters.
+        local nameLink, name
+        nameLink, name, _, _, _, _, _ = text:match(patterns.guild)
+        if not nameLink then
+            nameLink, name = text:match(patterns.nogl)
+        end
+        if not nameLink or not name then
+            return false
+        end
+
+        local charName, charRealm = PF_ResolveNameLink(nameLink)
+        if not charName then
+            charName = name
+            charRealm = GetNormalizedRealmNameSafe()
+        end
+        if not charName or charName == "" or IsSecret(charName) then return false end
+
+        local region = SafeCall(ParseFiend.GetRegion, ParseFiend)
+        local record = SafeCall(ParseFiend.GetPlayerRecord, ParseFiend, charName, charRealm, region)
+        if not record then return false end
+
+        local ppTable = record.pp
+        if type(ppTable) ~= "table" or #ppTable < ParseFiend.PP_CELL_COUNT then
+            return false
+        end
+        local total = tonumber(SafeCall(ParseFiend.AggregateTotal, ParseFiend, ppTable)) or 0
+        if total <= 0 then return false end
+
+        local color = ParseFiend:GetPPColor(total) or ParseFiend.Colors.GREY
+        local suffix = " - Parse Points: " .. color .. tostring(total) .. "|r"
+
+        if ParseFiendConfig and ParseFiendConfig.debug then
+            print("PF [WhoChat] name=" .. charName .. "-" .. (charRealm or "?") ..
+                  " total=" .. total)
+        end
+
+        return false, text .. suffix, ...
+    end
+
+    if ChatFrameUtil and ChatFrameUtil.AddMessageEventFilter then
+        ChatFrameUtil.AddMessageEventFilter("CHAT_MSG_SYSTEM", OnWhoChatMessage)
+    else
+        ChatFrame_AddMessageEventFilter("CHAT_MSG_SYSTEM", OnWhoChatMessage)
+    end
+end
+
+-- Hook the chat filter setup into PLAYER_LOGIN so we register after
+-- addon init (RaiderIO has already installed their filter by then).
+local chatFilterFrame = CreateFrame("Frame")
+chatFilterFrame:RegisterEvent("PLAYER_LOGIN")
+chatFilterFrame:SetScript("OnEvent", function(_, event)
+    if event ~= "PLAYER_LOGIN" then return end
+    pcall(PF_RegisterWhoChatFilter)
+end)
