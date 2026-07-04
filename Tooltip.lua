@@ -78,7 +78,17 @@ local function AppendParsePoints(tooltip, name, realm)
     local record  = SafeCall(ParseFiend.GetPlayerRecord, ParseFiend, name, effectiveRealm, region)
 
     if ParseFiendConfig and ParseFiendConfig.debug then
-        print("PF lookup=" .. name .. "-" .. effectiveRealm .. " hit=" .. tostring(record and true or false))
+        -- The second line always uses the slug form so it's directly
+        -- comparable to the database keys in Data.lua. The preceding
+        -- `[Communities]` etc. line keeps the human-readable realm
+        -- ("Quel'Thalas") so the source is unambiguous.
+        -- NOTE: `ParseFiend.SlugifyRealm` is a free function attached to
+        -- the namespace; do NOT pass `ParseFiend` as `self` — it's a
+        -- static helper called with one positional arg (the realm).
+        local realmKey = SafeCall(ParseFiend.SlugifyRealm, effectiveRealm)
+                   or SafeCall(ParseFiend.NormalizeKey, effectiveRealm)
+                   or effectiveRealm
+        print("PF lookup=" .. name .. "-" .. realmKey .. " hit=" .. tostring(record and true or false))
     end
 
     if not record then

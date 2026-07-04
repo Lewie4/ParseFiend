@@ -63,6 +63,42 @@ local function NormalizeKey(key)
 end
 ParseFiend.NormalizeKey = NormalizeKey
 
+---Convert a realm display name into the slug form used as the database key
+---in Data.lua. The export pipeline generates these keys from the player-
+---facing realm display name by:
+---   1. Stripping every non-alphabetic / non-space character (apostrophes,
+---      hyphens, special casing punctuation, etc).
+---   2. Lower-casing any uppercase letter that is now sitting immediately
+---      after a letter within the same "word" (i.e. CamelCase that was
+---      created by step 1 joining two originally separate words).
+---Examples (display -> slug):
+---   "Quel'Thalas"      -> "Quelthalas"
+---   "Twisting Nether"  -> "Twisting Nether"
+---   "Tarren Mill"      -> "Tarren Mill"
+---   "Blackmoore"       -> "Blackmoore"
+---The display form is retained for chat/tooltip rendering; only this
+---slug is used as the look-up key for the player record.
+---@param displayRealm string|nil
+---@return string|nil
+local function SlugifyRealm(displayRealm)
+    if not displayRealm or type(displayRealm) ~= "string" then return nil end
+    -- Step 1: keep letters and spaces. (u)letter is `%a` in Lua patterns
+    -- and includes our apostrophes, hyphens, accent chars, etc.
+    local s = displayRealm:gsub("[^%a%s]", "")
+    if s == "" then return nil end
+    -- Step 2: collapse any lowercase-letter(+uppercase-letter) pattern
+    -- that arose from joining two CamelCase words once punctuation was
+    -- removed. Single-pass replacement — ordered left-to-right so each
+    -- match is fed back into the engine exactly once.
+    s = s:gsub("(%l)(%u)", function(prev, uc)
+        return prev .. uc:lower()
+    end)
+    -- Trim any whitespace we might have left at the seams.
+    s = s:gsub("^%s+", ""):gsub("%s+$", ""):gsub("%s+", " ")
+    return s ~= "" and s or nil
+end
+ParseFiend.SlugifyRealm = SlugifyRealm
+
 ---Fast path for the hot read: ppTable cells are already numbers in [0,100].
 ---Only the slow fallback tiers handle non-number input (legacy strings).
 ---@param pp number|string|nil
@@ -100,6 +136,10 @@ function ParseFiend:GetRegion()
 end
 
 ---Look up a character record. Returns the table or nil.
+---The realm argument is the *display* form (e.g. "Quel'Thalas" — what the
+---in-game tooltips and chat filter pass through). The database key is the
+---slug form ("Quelthalas") produced by the export pipeline. We slugify
+---once here so every caller benefits without having to know the encoding.
 ---@param name string
 ---@param realm string|nil
 ---@param region string|nil
@@ -109,7 +149,7 @@ function ParseFiend:GetPlayerRecord(name, realm, region)
 
     name = NormalizeKey(name)
     if not name then return nil end
-    realm = NormalizeKey(realm)
+    realm = SlugifyRealm(realm)
     if not realm then return nil end
     if not region then region = self:GetRegion() end
 
