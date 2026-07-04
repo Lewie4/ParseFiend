@@ -98,10 +98,20 @@ local function AppendParsePoints(tooltip, name, realm)
         return
     end
 
-    local ppColor = ParseFiend:GetPPColor(totalPoints) or ParseFiend.Colors.GREY
+    -- Display path: RoundHalfUp to a whole number, colour-band off the
+    -- rounded integer, render once. Note that the underlying data is
+    -- 4-decimal precision and aggregations stay in float; only the
+    -- player-facing integer is rounded. FormatPP picks the colour band
+    -- using the rounded integer so the number shown and the colour band
+    -- never disagree at threshold boundaries (e.g. 999.6 -> 1000 -> GREEN).
+    local display = SafeCall(ParseFiend.FormatPP, ParseFiend, totalPoints)
+    if not display then
+        AppendUnknownIfDebug(tooltip)
+        return
+    end
 
     tooltip:AddLine(" ")
-    tooltip:AddDoubleLine("Parse Points|r", ppColor .. tostring(totalPoints) .. "|r")
+    tooltip:AddDoubleLine("Parse Points|r", display)
 end
 
 local function Emit(tooltip, name, realm, source)
@@ -561,8 +571,14 @@ local function PF_RegisterWhoChatFilter()
         local total = tonumber(SafeCall(ParseFiend.AggregateTotal, ParseFiend, ppTable)) or 0
         if total <= 0 then return false end
 
-        local color = ParseFiend:GetPPColor(total) or ParseFiend.Colors.GREY
-        local suffix = " - Parse Points: " .. color .. tostring(total) .. "|r"
+        -- Same FormatPP path as the tooltip: round half-up, colour-band off
+        -- the rounded integer so the displayed number and its colour don't
+        -- disagree at threshold boundaries. FormatPP already returns the
+        -- full coloured string (`<color><int>|r`) so we just embed it.
+        local display = SafeCall(ParseFiend.FormatPP, ParseFiend, total)
+        if not display then return false end
+
+        local suffix = " - Parse Points: " .. display
 
         if ParseFiendConfig and ParseFiendConfig.debug then
             print("PF [WhoChat] name=" .. charName .. "-" .. (charRealm or "?") ..

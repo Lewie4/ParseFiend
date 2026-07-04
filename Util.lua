@@ -169,6 +169,10 @@ function ParseFiend:AggregateTotal(ppTable)
 end
 
 ---Colour band for a parse-points value (max 4000).
+---Called with the *rounded* integer that will be shown to the player
+---so that the displayed number and the colour band are consistent
+---(e.g. 999.6 rounds to 1000 and picks up the green band rather than
+---staying grey at the threshold boundary).
 ---@param pp number
 ---@return string|nil colour escape code (|cxxxxxxxxxx) or nil if pp is invalid.
 function ParseFiend:GetPPColor(pp)
@@ -190,4 +194,37 @@ function ParseFiend:GetPPColor(pp)
     else
         return self.Colors.GREY
     end
+end
+
+---Round to nearest integer using "half up" rounding (0.5 -> 1, 1.5 -> 2,
+----0.5 -> 0). Lua's built-in `string.format("%.0f", x)` uses platform
+---banker's rounding on some runtimes which gives 0.5 -> 0; we want
+---half-up so .5 always bumps to the next integer in the player-facing
+---display. Only positive values are expected in practice (parse points
+---are always >= 0) but the helper handles negatives the conventional way.
+---@param x number
+---@return integer
+function ParseFiend:RoundHalfUp(x)
+    x = tonumber(x)
+    if not x or x ~= x then return 0 end
+    if x >= 0 then
+        return math.floor(x + 0.5)
+    end
+    -- Negative .5 rounds toward zero (i.e. up). Defensive only — not used.
+    return -math.floor(-x + 0.5)
+end
+
+---Format a (possibly fractional) parse-points aggregate for player display:
+---round half-up to a whole number, pick the colour band off the rounded
+---integer, return a coloured string of the form `"<color><int>|r"`. Returns
+---`nil` when there is nothing meaningful to show (zero / no record).
+---@param aggregate number
+---@return string|nil
+function ParseFiend:FormatPP(aggregate)
+    aggregate = tonumber(aggregate)
+    if not aggregate or aggregate ~= aggregate or aggregate <= 0 then return nil end
+    local rounded = self:RoundHalfUp(aggregate)
+    if rounded <= 0 then return nil end
+    local color = self:GetPPColor(rounded) or self.Colors.GREY
+    return color .. tostring(rounded) .. "|r"
 end
