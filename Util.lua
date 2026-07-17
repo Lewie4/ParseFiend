@@ -208,28 +208,29 @@ function ParseFiend:AggregateTotal(ppTable)
     return total
 end
 
----Colour band for a parse-points value (max 4000).
----Called with the *rounded* integer that will be shown to the player
----so that the displayed number and the colour band are consistent
----(e.g. 999.6 rounds to 1000 and picks up the green band rather than
----staying grey at the threshold boundary).
----@param pp number
----@return string|nil colour escape code (|cxxxxxxxxxx) or nil if pp is invalid.
-function ParseFiend:GetPPColor(pp)
-    pp = tonumber(pp)
-    if not pp or pp ~= pp then return self.Colors.GREY end
+---Colour band for a parse-points *percent* (0‑100). The thresholds match
+---the historical point‑based colour bands (1000 / 2000 / 3000 / 3800 / 3960
+---out of 4000) expressed as percentages (25 % / 50 % / 75 % / 95 % / 99 %).
+---Using percentages keeps the colour mapping tier‑agnostic and reusable for
+---per‑difficulty aggregates (max 1000) and any future tier with a different
+---max value.
+---@param percent number
+---@return string colour escape code (|cxxxxxxxxxx)
+function ParseFiend:GetPPColor(percent)
+    percent = tonumber(percent)
+    if not percent or percent ~= percent then return self.Colors.GREY end
 
-    if pp >= 4000 then
+    if percent >= 100 then
         return self.Colors.GOLD
-    elseif pp >= 3960 then
+    elseif percent >= 99 then
         return self.Colors.PINK
-    elseif pp >= 3800 then
+    elseif percent >= 95 then
         return self.Colors.ORANGE
-    elseif pp >= 3000 then
+    elseif percent >= 75 then
         return self.Colors.PURPLE
-    elseif pp >= 2000 then
+    elseif percent >= 50 then
         return self.Colors.BLUE
-    elseif pp >= 1000 then
+    elseif percent >= 25 then
         return self.Colors.GREEN
     else
         return self.Colors.GREY
@@ -254,17 +255,30 @@ function ParseFiend:RoundHalfUp(x)
     return -math.floor(-x + 0.5)
 end
 
----Format a (possibly fractional) parse-points aggregate for player display:
----round half-up to a whole number, pick the colour band off the rounded
----integer, return a coloured string of the form `"<color><int>|r"`. Returns
----`nil` when there is nothing meaningful to show (zero / no record).
----@param aggregate number
+---Format a parse-points aggregate for player display:
+---  * `value` – the sum of parse points to show (e.g. overall `totalPoints`
+---    or a single difficulty `diffPoints`).
+---  * `max`   – the maximum possible value for that aggregation (e.g. 4000
+---    for the overall tier, 1000 per difficulty). Used only to compute the
+---    percent that drives the colour band so the same colour ladder works
+---    across any tier or metric.
+---The display number is the rounded sum of points (half‑up) while the colour
+---band is taken from the percent value (`100 * value / max`) which matches
+---the existing colour thresholds (25 % grey, 50 % green, 75 % blue, 95 %
+---purple, 99 % orange, 100 % gold, etc.).
+---@param value number
+---@param max number
 ---@return string|nil
-function ParseFiend:FormatPP(aggregate)
-    aggregate = tonumber(aggregate)
-    if not aggregate or aggregate ~= aggregate or aggregate <= 0 then return nil end
-    local rounded = self:RoundHalfUp(aggregate)
+function ParseFiend:FormatPP(value, max)
+    value = tonumber(value)
+    max = tonumber(max)
+    if not value or value ~= value or value <= 0 then return nil end
+    if not max or max ~= max or max <= 0 then return nil end
+
+    local rounded = self:RoundHalfUp(value)
     if rounded <= 0 then return nil end
-    local color = self:GetPPColor(rounded) or self.Colors.GREY
+
+    local percent = (value / max) * 100
+    local color = self:GetPPColor(percent) or self.Colors.GREY
     return color .. tostring(rounded) .. "|r"
 end

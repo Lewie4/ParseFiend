@@ -108,13 +108,18 @@ local function AppendParsePoints(tooltip, name, realm)
         return
     end
 
-    -- Display path: RoundHalfUp to a whole number, colour-band off the
-    -- rounded integer, render once. Note that the underlying data is
-    -- 4-decimal precision and aggregations stay in float; only the
-    -- player-facing integer is rounded. FormatPP picks the colour band
-    -- using the rounded integer so the number shown and the colour band
-    -- never disagree at threshold boundaries (e.g. 999.6 -> 1000 -> GREEN).
-    local display = SafeCall(ParseFiend.FormatPP, ParseFiend, totalPoints)
+    -- Display path: aggregate total points are converted to a percent of the
+    -- tier-wide maximum (4000) and passed to `FormatPP` which rounds half-up,
+    -- picks the colour band off the percent and returns a coloured string.
+    -- Working in percent keeps the same colour mapping reusable for any tier
+    -- Display path: pass the raw point total plus the tier max (4000) to
+    -- `FormatPP`. The helper rounds the point value half-up, derives the
+    -- percent for the colour band (`100 * total / max`) and returns a
+    -- colour-tagged `<int>|r` string so the number we show stays as parse
+    -- points while the colour ladder is the same generic percent-based
+    -- mapping used elsewhere.
+    local maxTotal = ParseFiend.BOSSES_PER_TIER * ParseFiend.DIFFICULTIES_PER_BOSS * 100  -- 4000
+    local display = SafeCall(ParseFiend.FormatPP, ParseFiend, totalPoints, maxTotal)
     if not display then
         AppendUnknownIfDebug(tooltip)
         return
@@ -122,6 +127,30 @@ local function AppendParsePoints(tooltip, name, realm)
 
     tooltip:AddLine(" ")
     tooltip:AddDoubleLine("Parse Points|r", display)
+
+    -- When Alt or Shift is held, break the aggregate down by difficulty so
+    -- players can see the per-difficulty totals. Each difficulty column is
+    -- worth 1000 points (10 bosses * 100) so we pass that as the max so the
+    -- colour band uses the difficulty-specific percent. The per‑difficulty
+    -- lines are rendered immediately after the total (no extra blank line)
+    -- and listed from hardest to easiest.
+    if (IsAltKeyDown and IsAltKeyDown()) or (IsShiftKeyDown and IsShiftKeyDown()) then
+        local diffOrder = {
+            { key = "mythic", label = "Mythic" },
+            { key = "heroic", label = "Heroic" },
+            { key = "normal", label = "Normal" },
+            { key = "lfr",    label = "LFR"    },
+        }
+        local maxPerDifficulty = ParseFiend.BOSSES_PER_TIER * 100  -- 1000
+
+        for _, entry in ipairs(diffOrder) do
+            local diffIdx = ParseFiend.DIFFICULTY_INDEX[entry.key]
+            local diffPoints = SafeCall(ParseFiend.AggregateByDifficulty, ParseFiend, ppTable, diffIdx) or 0
+            local diffDisplay = SafeCall(ParseFiend.FormatPP, ParseFiend, diffPoints, maxPerDifficulty)
+                or (ParseFiend.Colors.GREY .. "0|r")
+            tooltip:AddDoubleLine(entry.label, diffDisplay)
+        end
+    end
 end
 
 local function Emit(tooltip, name, realm, source)
@@ -581,11 +610,8 @@ local function PF_RegisterWhoChatFilter()
         local total = tonumber(SafeCall(ParseFiend.AggregateTotal, ParseFiend, ppTable)) or 0
         if total <= 0 then return false end
 
-        -- Same FormatPP path as the tooltip: round half-up, colour-band off
-        -- the rounded integer so the displayed number and its colour don't
-        -- disagree at threshold boundaries. FormatPP already returns the
-        -- full coloured string (`<color><int>|r`) so we just embed it.
-        local display = SafeCall(ParseFiend.FormatPP, ParseFiend, total)
+        local maxTotal = ParseFiend.BOSSES_PER_TIER * ParseFiend.DIFFICULTIES_PER_BOSS * 100  -- 4000
+        local display = SafeCall(ParseFiend.FormatPP, ParseFiend, total, maxTotal)
         if not display then return false end
 
         local suffix = " - Parse Points: " .. display
