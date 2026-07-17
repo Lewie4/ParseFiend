@@ -262,10 +262,11 @@ end
 ---    for the overall tier, 1000 per difficulty). Used only to compute the
 ---    percent that drives the colour band so the same colour ladder works
 ---    across any tier or metric.
----The display number is the rounded sum of points (half‑up) while the colour
----band is taken from the percent value (`100 * value / max`) which matches
----the existing colour thresholds (25 % grey, 50 % green, 75 % blue, 95 %
----purple, 99 % orange, 100 % gold, etc.).
+---The display number is the rounded sum of points (half‑up). The colour band
+---is also derived from the **rounded** value so the integer shown to the
+---player and its colour never disagree: e.g. 999.6 rounds to 1000 (the
+---displayed number) and therefore uses the 25 % / 100 % colour band rather
+---than staying grey/pink off the unrounded value.
 ---@param value number
 ---@param max number
 ---@return string|nil
@@ -278,7 +279,7 @@ function ParseFiend:FormatPP(value, max)
     local rounded = self:RoundHalfUp(value)
     if rounded <= 0 then return nil end
 
-    local percent = (value / max) * 100
+    local percent = (rounded / max) * 100
     local color = self:GetPPColor(percent) or self.Colors.GREY
     return color .. tostring(rounded) .. "|r"
 end
