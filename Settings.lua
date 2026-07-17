@@ -7,12 +7,15 @@ local AddonName = ... or "ParseFiend"
 local OpenSettings = function() print("|cffff5555ParseFiend|r - settings UI not available on this client.") end
 
 local frame = CreateFrame("Frame")
-frame:RegisterEvent("PLAYER_LOGIN")
+frame:RegisterEvent("ADDON_LOADED")
 
-frame:SetScript("OnEvent", function()
+frame:SetScript("OnEvent", function(self, event, ...) 
+    if event ~= "ADDON_LOADED" then return end
+    local addonName = ...
+    if addonName ~= AddonName then return end
     if Settings and Settings.RegisterAddOnCategory and Settings.RegisterVerticalLayoutCategory then
-        local ok, category = pcall(Settings.RegisterVerticalLayoutCategory, Settings, "ParseFiend")
-        if ok then
+        local category = Settings.RegisterVerticalLayoutCategory("ParseFiend")
+        if category then
             local function GetValue()
                 return ParseFiendConfig and ParseFiendConfig.debug
             end
