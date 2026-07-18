@@ -108,18 +108,19 @@ local function AppendParsePoints(tooltip, name, realm)
         return
     end
 
-    -- Display path: aggregate total points are converted to a percent of the
-    -- tier-wide maximum (4000) and passed to `FormatPP` which rounds half-up,
-    -- picks the colour band off the percent and returns a coloured string.
-    -- Working in percent keeps the same colour mapping reusable for any tier
-    -- Display path: pass the raw point total plus the tier max (4000) to
-    -- `FormatPP`. The helper rounds the point value half-up, derives the
-    -- percent for the colour band (`100 * total / max`) and returns a
-    -- colour-tagged `<int>|r` string so the number we show stays as parse
-    -- points while the colour ladder is the same generic percent-based
-    -- mapping used elsewhere.
-    local maxTotal = ParseFiend.BOSSES_PER_TIER * ParseFiend.DIFFICULTIES_PER_BOSS * 100  -- 4000
-    local display = SafeCall(ParseFiend.FormatPP, ParseFiend, totalPoints, maxTotal)
+    -- Determine the per‑difficulty and overall maximum points from the actual
+    -- data set (each present boss cell is worth 100 points). This makes the
+    -- colour/percent calculation tier‑agnostic: for a full 10‑boss tier the
+    -- overall max is 4000 and each difficulty max is 1000, but it scales for
+    -- partial data or any future tier size without code changes.
+    local maxes = SafeCall(ParseFiend.ComputeMaxPoints, ParseFiend, ppTable)
+              or { total = 0, lfr = 0, normal = 0, heroic = 0, mythic = 0 }
+    if maxes.total <= 0 then
+        AppendUnknownIfDebug(tooltip)
+        return
+    end
+
+    local display = SafeCall(ParseFiend.FormatPP, ParseFiend, totalPoints, maxes.total)
     if not display then
         AppendUnknownIfDebug(tooltip)
         return
@@ -128,27 +129,24 @@ local function AppendParsePoints(tooltip, name, realm)
     tooltip:AddLine(" ")
     tooltip:AddDoubleLine("Parse Points|r", display)
 
-    -- When Alt or Shift is held, break the aggregate down by difficulty so
-    -- players can see the per-difficulty totals. Each difficulty column is
-    -- worth 1000 points (10 bosses * 100) so we pass that as the max so the
-    -- colour band uses the difficulty-specific percent. The per‑difficulty
-    -- lines are rendered immediately after the total (no extra blank line)
+    -- When Alt, Shift or Ctrl is held, break the aggregate down by difficulty.
+    -- Per‑difficulty rows are drawn directly under the total (no extra spacer)
     -- and listed from hardest to easiest.
-    if (IsAltKeyDown and IsAltKeyDown()) or (IsShiftKeyDown and IsShiftKeyDown()) then
+    if (IsAltKeyDown and IsAltKeyDown()) or (IsShiftKeyDown and IsShiftKeyDown())
+        or (IsControlKeyDown and IsControlKeyDown()) then
         local diffOrder = {
             { key = "mythic", label = "Mythic" },
             { key = "heroic", label = "Heroic" },
             { key = "normal", label = "Normal" },
             { key = "lfr",    label = "LFR"    },
         }
-        local maxPerDifficulty = ParseFiend.BOSSES_PER_TIER * 100  -- 1000
 
         for _, entry in ipairs(diffOrder) do
             local diffIdx = ParseFiend.DIFFICULTY_INDEX[entry.key]
             local diffPoints = SafeCall(ParseFiend.AggregateByDifficulty, ParseFiend, ppTable, diffIdx) or 0
-            local diffDisplay = SafeCall(ParseFiend.FormatPP, ParseFiend, diffPoints, maxPerDifficulty)
+            local diffDisplay = SafeCall(ParseFiend.FormatPP, ParseFiend, diffPoints, maxes[entry.key])
                 or (ParseFiend.Colors.GREY .. "0|r")
-            tooltip:AddDoubleLine(entry.label, diffDisplay)
+            tooltip:AddDoubleLine(ParseFiend.Colors.WHITE .. entry.label .. "|r", diffDisplay)
         end
     end
 end
@@ -610,8 +608,11 @@ local function PF_RegisterWhoChatFilter()
         local total = tonumber(SafeCall(ParseFiend.AggregateTotal, ParseFiend, ppTable)) or 0
         if total <= 0 then return false end
 
-        local maxTotal = ParseFiend.BOSSES_PER_TIER * ParseFiend.DIFFICULTIES_PER_BOSS * 100  -- 4000
-        local display = SafeCall(ParseFiend.FormatPP, ParseFiend, total, maxTotal)
+        local maxes = SafeCall(ParseFiend.ComputeMaxPoints, ParseFiend, ppTable)
+                  or { total = 0, lfr = 0, normal = 0, heroic = 0, mythic = 0 }
+        if maxes.total <= 0 then return false end
+
+        local display = SafeCall(ParseFiend.FormatPP, ParseFiend, total, maxes.total)
         if not display then return false end
 
         local suffix = " - Parse Points: " .. display

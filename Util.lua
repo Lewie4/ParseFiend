@@ -208,6 +208,44 @@ function ParseFiend:AggregateTotal(ppTable)
     return total
 end
 
+---Compute the per‑difficulty and overall maximum points possible from the
+---data set. Each cell is worth `100` points per boss per difficulty, so the
+---max for a difficulty equals the number of non‑nil entries it contains ×
+---100. The overall max is the sum of all difficulty maxima. This is used to
+---scale percent for colour bands when the tier size or difficulty coverage
+---isn't the full `10 × 4` layout (e.g. partially populated data, new tier
+---with a different boss count, or any future tier).
+---@param ppTable table|number[]|nil
+---@return { total:number, lfr:number, normal:number, heroic:number, mythic:number }
+function ParseFiend:ComputeMaxPoints(ppTable)
+    local result = { total = 0, lfr = 0, normal = 0, heroic = 0, mythic = 0 }
+    if type(ppTable) ~= "table" then return result end
+
+    local diffMul = self.DIFFICULTIES_PER_BOSS
+    local bosses  = self.BOSSES_PER_TIER
+
+    for bossIndex = 1, bosses do
+        local base = (bossIndex - 1) * diffMul
+        for diffIndex = 1, diffMul do
+            local cell = ppTable[base + diffIndex]
+            if cell ~= nil then
+                local key
+                if     diffIndex == 1 then key = "lfr"
+                elseif diffIndex == 2 then key = "normal"
+                elseif diffIndex == 3 then key = "heroic"
+                elseif diffIndex == 4 then key = "mythic"
+                end
+                if key then
+                    result[key]    = (result[key]    or 0) + 100
+                    result["total"] = result["total"] + 100
+                end
+            end
+        end
+    end
+
+    return result
+end
+
 ---Colour band for a parse-points *percent* (0‑100). The thresholds match
 ---the historical point‑based colour bands (1000 / 2000 / 3000 / 3800 / 3960
 ---out of 4000) expressed as percentages (25 % / 50 % / 75 % / 95 % / 99 %).
