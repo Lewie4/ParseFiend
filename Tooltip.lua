@@ -216,11 +216,17 @@ local function UnitTooltipHandler(tooltip, data)
     local unit = GetTooltipUnit(tooltip)
     if not unit or not SafeUnitIsPlayer(unit) then return end
 
-    -- `UnitName` returns `(name, realm)`. Multi-return through pcall
-    -- drops values past the first by default; capture explicitly.
+    -- `UnitName` returns `(name, realm)`. Both fields can be secret strings
+    -- (when the source is a cross‑realm unit the Blizzard API marks as
+    -- protected); any comparison against them while our execution is
+    -- tainted will raise "attempt to compare secret string". Use the
+    -- `IsSecret` helper to detect this and fall back to the implicit realm
+    -- instead of touching the secret directly.
     local ok, name, realm = pcall(UnitName, unit)
-    if not ok or not name then return end
-    if not realm or realm == "" then realm = GetNormalizedRealmNameSafe() end
+    if not ok or not name or IsSecret(name) then return end
+    if IsSecret(realm) or not realm then
+        realm = GetNormalizedRealmNameSafe()
+    end
     Emit(tooltip, name, realm, "Unit")
 end
 
