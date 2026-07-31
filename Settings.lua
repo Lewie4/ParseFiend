@@ -85,12 +85,21 @@ frame:SetScript("OnEvent", function(self, event, ...)
         if command == "d" then
             ParseFiendConfig.debug = not ParseFiendConfig.debug
             print("|cff00ff96ParseFiend|r - Debug mode " .. (ParseFiendConfig.debug and "enabled" or "disabled") .. ".")
+        elseif command == "rc" or command == "readycheck" then
+            if DoReadyCheck then
+                DoReadyCheck()
+            elseif SlashCmdList and SlashCmdList["READYCHECK"] then
+                SlashCmdList["READYCHECK"]("")
+            else
+                print("|cffff5555ParseFiend|r - Ready check command not available on this client.")
+            end
         elseif command == "options" or command == "settings" or command == "" then
             OpenSettings()
         else
             print("|cff00ff96ParseFiend|r - available commands:")
             print("/pf settings - Open the ParseFiend settings panel.")
             print("/pf d - Toggle debug mode.")
+            print("/pf rc - Issue a ready check.")
         end
     end
 end)
