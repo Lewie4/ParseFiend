@@ -1,5 +1,15 @@
 local AddonName = ... or "ParseFiend"
 
+-- =====================================================================
+-- OPTIONS PANEL TOGGLE
+-- =====================================================================
+-- Set this flag to `true` to re‑enable the ParseFiend entry under
+-- Esc > Options > AddOns and the `/pf settings` slash command.
+-- All the registration code below is preserved; this flag is the only
+-- switch that needs to be flipped to bring the panel back.
+local REGISTER_OPTIONS_PANEL = false
+-- =====================================================================
+
 -- Single forward declaration. The actual implementation is assigned below
 -- only when the Settings API registration succeeds; calling /pf before that
 -- fails loudly with a clear error rather than silently no-op'ing like the
@@ -13,7 +23,7 @@ frame:SetScript("OnEvent", function(self, event, ...)
     if event ~= "ADDON_LOADED" then return end
     local addonName = ...
     if addonName ~= AddonName then return end
-    if Settings and Settings.RegisterAddOnCategory and Settings.RegisterVerticalLayoutCategory then
+    if REGISTER_OPTIONS_PANEL and Settings and Settings.RegisterAddOnCategory and Settings.RegisterVerticalLayoutCategory then
         local category = Settings.RegisterVerticalLayoutCategory("ParseFiend")
         if category then
             local function GetValue()
